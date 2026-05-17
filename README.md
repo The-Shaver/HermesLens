@@ -196,7 +196,7 @@ hermeslens/
 - [x] All 7 design questions answered
 - [x] PLAN.md and DESIGN.md created
 
-### Phase 1: Backend (TI + Cooper)
+### Phase 1: Backend 
 - [ ] Create backend package structure
 - [ ] Implement config loader (YAML)
 - [ ] Gateway data collector
@@ -208,7 +208,7 @@ hermeslens/
 - [ ] Error handling for missing data sources
 - [ ] Graceful fallback for non-existent data
 
-### Phase 2: M5 Firmware (TI)
+### Phase 2: M5 Firmware
 - [ ] WiFi connection + reconnection
 - [ ] HTTP client / API polling
 - [ ] Basic screen rendering framework
@@ -222,14 +222,14 @@ hermeslens/
 - [ ] Config file parsing
 - [ ] Error/offline display
 
-### Phase 3: Polish (TI + Cooper)
+### Phase 3: Polish
 - [ ] Error/edge case handling on both sides
 - [ ] Example config and screenshots
 - [ ] Installation documentation
 - [ ] Flashing guide for M5 StickS3
 - [ ] Performance tuning
 
-### Phase 4: Release (All)
+### Phase 4: Release
 - [ ] GitHub repo setup
 - [ ] pip package publish
 - [ ] Community announcement
