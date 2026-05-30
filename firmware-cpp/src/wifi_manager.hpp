@@ -37,8 +37,11 @@ public:
         uint32_t start = millis();
         while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
             delay(200);
+            yield();   // feed watchdog in case WiFi init takes long
         }
         if (WiFi.status() == WL_CONNECTED) {
+            _ssid     = ssid;
+            _password = password;
             _ip = WiFi.localIP().toString();
             Serial.printf("[wifi] Connected  IP=%s\n", _ip.c_str());
             _connected = true;
@@ -60,14 +63,20 @@ public:
             _connected = true;
             return true;
         }
-        // Disconnected — attempt reconnect
+        // Disconnected — attempt reconnect with exponential backoff
         static uint32_t lastAttempt = 0;
+        static uint32_t backoffMs   = 5000;
         uint32_t now = millis();
-        if (now - lastAttempt > 5000 && _ssid.length() > 0) {
-            Serial.println("[wifi] Reconnecting...");
-            WiFi.reconnect();
+        if (now - lastAttempt > backoffMs && _ssid.length() > 0) {
+            Serial.printf("[wifi] Reconnecting to %s... (backoff=%lums)\n",
+                          _ssid.c_str(), backoffMs);
+            WiFi.begin(_ssid.c_str(), _password.c_str());
+            WiFi.setAutoReconnect(false);   // we control reconnect explicitly
             lastAttempt = now;
+            backoffMs = (backoffMs * 2 < 60000) ? backoffMs * 2 : 60000;
         }
+        // Reset backoff when WiFi comes back (checked next maintain() call)
+        if (WiFi.status() == WL_CONNECTED) backoffMs = 5000;
         _connected = false;
         return false;
     }
@@ -95,6 +104,7 @@ private:
     bool     _connected = false;
     bool     _apStarted = false;
     String   _ssid;
+    String   _password;
     String   _ip;
     String   _apIP;
 };

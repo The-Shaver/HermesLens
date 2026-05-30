@@ -62,6 +62,8 @@ enum class ApiResult {
 
 struct ApiStatus {
     ApiResult         result = ApiResult::CONNECT_ERROR;
+    int               http_code = 0;      // raw HTTP status code (0 = no HTTP response)
+    String            error_text;          // human-readable error for display
     String            version;
     String            hermes_version;
     String            gateway_state;
@@ -94,7 +96,11 @@ public:
     /** GET /api/status — full dashboard JSON. */
     ApiStatus fetchStatus() {
         ApiStatus out;
-        if (_baseUrl.length() == 0 || !WiFi.isConnected()) return out;
+        if (_baseUrl.length() == 0 || !WiFi.isConnected()) {
+            out.result      = ApiResult::CONNECT_ERROR;
+            out.error_text  = "WiFi not connected";
+            return out;
+        }
 
         HTTPClient http;
         String url = _baseUrl + "/api/status";
@@ -103,21 +109,24 @@ public:
         http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
 
         int code = http.GET();
+        out.http_code = code;          // always capture the raw HTTP code
         if (code != HTTP_CODE_OK) {
-            out.result = ApiResult::HTTP_ERROR;
+            out.result     = ApiResult::HTTP_ERROR;
+            out.error_text = "HTTP " + String(code);
             http.end();
             return out;
         }
 
         int bodyLen = http.getSize();
         if (bodyLen <= 0) {
-            out.result = ApiResult::PARSE_ERROR;
+            out.result     = ApiResult::PARSE_ERROR;
+            out.error_text = "Empty body";
             http.end();
             return out;
         }
 
         // Stream into a DynamicJsonDocument (ESP32 has enough PSRAM for ~16 KB)
-        DynamicJsonDocument doc(8192);
+        DynamicJsonDocument doc(16384);
         WiFiClient* stream = http.getStreamPtr();
         DeserializationError err = deserializeJson(doc, *stream);
         http.end();
@@ -164,7 +173,10 @@ public:
         out.sessions.tokens_input         = js["tokens_input"]          | 0;
         out.sessions.tokens_output        = js["tokens_output"]         | 0;
         out.sessions.tool_calls_total     = js["tool_calls_total"]      | 0;
-        out.sessions.estimated_cost_usd   = js["estimated_cost_usd"]    | 0.0f;
+        // ArduinoJson float→String→float is broken on ESP32 Arduino cores.
+        // Extract as C-string then call atof().
+        { const char* sc = js["estimated_cost_usd"] | "0.0";
+          out.sessions.estimated_cost_usd = atof(sc); }
 
         return out;
     }

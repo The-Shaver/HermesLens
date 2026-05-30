@@ -1,0 +1,32 @@
+# HermesLens Configuration
+# Place this at ~/.hermeslens.yaml
+# All settings are optional — defaults shown below.
+
+# Path to Hermes Agent home directory.
+# Default: auto-detect from $HERMES_HOME env, fallback to ~/.hermes
+# hermes_home: ~/.hermes
+
+# Server binding
+port: 8123
+host: 127.0.0.1  # localhost only (safe). Use "0.0.0.0" for LAN access.
+
+# How often the M5 StickS3 should poll for updates (seconds)
+# refresh_interval: 10
+
+# Optional API key for protecting the endpoint.
+# When set, M5 must send X-API-Key header.
+# api_key: null
+
+# Agents to display on the dashboard.
+# Empty list (default) = auto-discover all profiles in ~/.hermes/profiles/
+# agents:
+#   - timmy
+#   - cooper
+#   - piper
+
+# Page order and visibility on the M5 StickS3.
+# pages:
+#   - agents
+#   - tasks
+#   - system
+#   - usage

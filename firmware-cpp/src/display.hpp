@@ -30,20 +30,19 @@ public:
     HermesDisplay() = default;
 
     bool init() {
-        auto cfg = M5.config();
-        cfg.clear_display        = true;
-        cfg.internal_imu         = false;  // we don't need the IMU
-        cfg.internal_rtc         = false;
-        cfg.internal_spk         = false;  // no speaker
-        cfg.internal_mic         = false;
-        cfg.output_power         = false;
-        cfg.led_brightness       = 0;
-
-        M5.begin(cfg);
+        // Expects M5.begin() to have been called by the caller before init().
+        // This method only handles panel-level init (rotation, colour depth,
+        // backlight) and caches the display pointer.  It must NOT call M5.begin()
+        // again — that would reset the USB CDC bridge and lose Serial output.
         _display = &M5.Display;
+        M5.Display.setRotation(3);          // StickS3: portrait 240 w × 135 h
+        M5.Display.setColorDepth(16);       // ST7789 is RGB565 native; set explicitly
+        M5.Display.setBrightness(80);       // backlight PWM — 80/255; avoids flicker
+        Serial.printf("[disp] panel %d x %d  brightness 80\n",
+                      (int)_display->width(), (int)_display->height());
 
-        _w  = SCREEN_W;
-        _h  = SCREEN_H;
+        _w  = _display->width();   // read ACTUAL panel dimensions after rotation
+        _h  = _display->height();
         _fg = COLOR_WHITE;
         _bg = COLOR_BG;
         return true;
@@ -109,7 +108,7 @@ public:
         drawText(lx, 68, "HermesLens-Setup",       COLOR_GREEN);
         drawText(lx, 88, "Then open browser at",   COLOR_GRAY);
         drawText(lx, 108, "192.168.4.1",            COLOR_GRAY);
-        drawText(lx, 128, "WiFi + backend",         COLOR_WHITE);
+        drawText(lx, 118, "WiFi + backend",         COLOR_WHITE);
     }
 
     void showConfigSaved() {
@@ -118,9 +117,38 @@ public:
         drawTextCentered(_h / 2 + 4,  "Rebooting...",  COLOR_GRAY);
     }
 
-    // ── Header ─────────────────────────────────────────────────
+    // ── Diagnostic page (loop scroll, button-paged) ─────────────
 
-    // ── Setup portal diagnostic ────────────────────────────────
+    /**
+     * Renders a scrolling diagnostic page for the dashboard error display.
+     * Page ID selects which slice to render:
+     *
+     *   DIAG_OVERVIEW (0) — error type + URL + notion of more pages
+     *                             (initial state = brief overview)
+     *   DIAG_DETAIL  (1) — raw error type and user action
+     *   DIAG_WIFI    (2) — WiFi + signal details
+     *   DIAG_META    (3) — firmware version, uptime, backend URL
+     *
+     * Called every refresh cycle by the dashboard main loop; the caller
+     * advances page independently when a button is pressed.
+     */
+    void setDiagnosticPage(uint8_t pageId,
+                           const char* titleLine,
+                           const char* errLine,
+                           const char* extraLine1,
+                           const char* extraLine2,
+                           const char* footerLine)
+    {
+        fillScreen(COLOR_BG);
+        drawTextCentered(22, titleLine, COLOR_RED);
+        for (int x = 0; x < _w; x += 2)  // horizontal rule
+            drawPixel(x, 32, COLOR_GRAY);
+
+        if (errLine[0])    drawTextCentered(44,  errLine,      COLOR_WHITE);
+        if (extraLine1[0]) drawTextCentered(60,  extraLine1,   COLOR_GRAY);
+        if (extraLine2[0]) drawTextCentered(74,  extraLine2,   COLOR_GRAY);
+                                          drawTextCentered(90,  footerLine,   COLOR_DIM);
+    }
 
     /**
      * Shows why setup portal was triggered (needsSetup diagnostics).
@@ -240,14 +268,15 @@ public:
     void setWifiStatus(bool connected) { _wifiConnected = connected; }
     bool wifiConnected() const         { return _wifiConnected; }
 
-private:
-    // Approx pixel width of ASCII string at 8px per char
+    // ── Display helpers ──────────────────────────────────────────
     uint16_t textWidth(const char* str) const {
         return strlen(str) * FONT_W;
     }
     uint16_t textWidth(const String& s) const {
         return s.length() * FONT_W;
     }
+    int16_t  screenWidth()  const { return _w; }
+    int16_t  screenHeight() const { return _h; }
 
     m5gfx::M5GFX* _display;
     int16_t  _w  = SCREEN_W;

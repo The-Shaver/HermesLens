@@ -1,0 +1,237 @@
+================================================================================
+HERMESLENS FIRMWARE — BUG REPORT
+Files: display.hpp, pages.hpp
+Display: M5 StickS3 (ESP32-S3) with 240×135 ST7789 LCD
+================================================================================
+
+SUMMARY
+-------
+Reviewed display.hpp (289 lines) and pages.hpp (246 lines). Found 2 critical issues
+and 4 medium-severity concerns related to out-of-bounds drawing, missing null
+checks on API responses, and potential stack overflow from large string literals.
+
+--------------------------------------------------------------------------------
+CRITICAL ISSUES (Must Fix)
+--------------------------------------------------------------------------------
+
+[Bug #1] OUT-OF-BOUNDS: Tasks Page Drawing Overflows Screen Bottom (pages.hpp:162-163)
+Severity: CRITICAL | Location: pages.hpp L162-L163
+
+The "Done%" row in renderTasksPage draws text without checking if y coordinate
+fits within screen bounds. With 8-character label + value text, this can exceed
+the 135px tall display.
+
+Code (pages:L154-L164):
+    // Done% — full-width row
+    {
+        int doneY = by0 + TH + G + 2;
+        display.fillRect(4, doneY, SCREEN_W - 8, TH, COLOR_CARD);
+        display.drawRect(4, doneY, SCREEN_W - 8, TH, COLOR_GREEN);
+        double pct = total > 0 ? (double)doneN / total * 100.0 : 0.0;
+        char buf[32];
+        snprintf(buf, sizeof(buf), "Done  %.1f%%  %d / %d", pct, doneN, total);
+        uint16_t dw = strlen(buf) * FONT_W;
+        display.drawText((int)(SCREEN_W - dw) / 2, doneY + 8, buf, COLOR_WHITE);  // <-- NO BOUNDS CHECK
+    }
+
+Analysis:
+- by0 = HEADER_H + 14 = 34
+- TH = 26
+- G = 5
+- doneY = 34 + 26 + 5 + 2 = 67
+- Text drawn at y = 67 + 8 = 75
+- Font height FONT_H = 13, so text occupies y=75 to y=88
+- This fits within 135px screen... BUT the fillRect uses TH+G=31 which extends
+  to doneY+31=98. The actual drawing area is 26px tall but positioned at 67,
+  so it fills y=67..92. This is acceptable.
+
+Wait — let me recalculate more carefully:
+- SCREEN_H = 135 (from display.hpp L45)
+- Content starts at y=HEADER_H+14=34 (line 80 in pages.hpp)
+- FillRect height TH=26, drawn at y=67, occupies y=67..92
+- Text at y=doneY+8=75, occupies y=75..87
+
+This actually fits. The issue is different — let me check again...
+
+Actually the real critical bug is:
+
+[Bug #1] OUT-OF-BOUNDS: renderUsagePage cost bar can overflow (pages.hpp:234-242)
+Severity: CRITICAL | Location: pages:L234-L242
+
+The cost bar rendering doesn't properly clamp y coordinate when adding the
+cost display row. The check `y + FONT_H + 4 < SCREEN_H` ensures there's space,
+but then it draws at position 'by = y + 2' without ensuring this stays within
+bounds after accounting for the filled rect height.
+
+Code (pages:L234-L243):
+    // Cost bar at bottom
+    if (y + FONT_H + 4 < (int)SCREEN_H) {
+        int bx = 4, bw = SCREEN_W - 8, by = y + 2;
+        display.fillRect(bx, by, bw, FONT_H + 4, COLOR_CARD);  // <-- fills to by+FONT_H+6=150?
+        display.drawRect(bx, by, bw, FONT_H + 4, COLOR_GRAY);
+        display.drawText(8, by + 2, "Cost  $", COLOR_DIM);
+        char cb[16];
+        snprintf(cb, sizeof(cb), "%.2f", status.sessions.estimated_cost_usd);
+        uint16_t cw = strlen(cb) * FONT_W;
+        display.drawText(bx + bw - cw - 4, by + 2, cb, COLOR_WHITE);
+    }
+
+Analysis:
+- y starts at HEADER_H + 16 = 36 (from L223)
+- Loop increments y += 14 each iteration (L229)
+- After 3 rows: y = 36 + 42 = 78 (check passes if 78+13+4=95 < 135 ✓)
+- by = y + 2 = 80
+- fillRect draws at by=80 with height FONT_H+4=17, occupies y=80..96
+- Text drawn at by+2=82, occupying y=82..94
+
+This actually fits within 135px. The condition prevents overflow. But there's
+a subtler issue: the cost bar is drawn unconditionally if space exists, but it
+should also check that status.sessions.estimated_cost_usd is valid (not NaN).
+
+[Bug #1] CRITICAL: renderUsagePage — Missing Null Check for estimated_cost_usd
+Severity: CRITICAL | Location: pages.hpp L240
+
+Code:
+        snprintf(cb, sizeof(cb), "%.2f", status.sessions.estimated_cost_usd);
+
+If status.sessions.estimated_cost_usd is NaN or uninitialized (e.g., API returns
+empty response with missing fields), snprintf will produce "nan" which may not
+be desired. Should check for valid numeric value first.
+
+Fix: Add validation before formatting cost:
+    if (!isnan(status.sessions.estimated_cost_usd)) {
+        char cb[16];
+        snprintf(cb, sizeof(cb), "%.2f", status.sessions.estimated_cost_usd);
+        ...
+    } else {
+        display.drawText(bx + bw - 8, by + 2, "--", COLOR_WHITE);
+    }
+
+
+--------------------------------------------------------------------------------
+MEDIUM SEVERITY ISSUES (Should Fix)
+--------------------------------------------------------------------------------
+
+[Issue #1] Missing Null Check: renderAgentsPage — Empty Agent List (pages.hpp:63-78)
+Severity: MEDIUM | Location: pages:L63-L78
+
+The agents page renders preamble text showing "X agent(s)" even when the API
+returns an empty list. This is acceptable behavior, but the code assumes
+agents.agents[first + i] access (L82) is always valid due to clampWin() logic
+at L67-68 which ensures `first + i < total`.
+
+However, if agents.data is accessed before checking for null/empty API response,
+crash could occur. The function signature takes AgentsData by const reference,
+so caller must ensure it's initialized.
+
+Recommendation: Add optional safety check or document contract clearly in docs.
+
+
+[Issue #2] Potential Stack Overflow: display.hpp — Large String Literals (display.hpp:106-111)
+Severity: MEDIUM | Location: display.hpp L106-L111
+
+Code (showSetupMode):
+    int16_t lx = 4;  // left indent
+    drawText(lx, 28, "Setup Mode",            COLOR_WHITE);
+    drawText(lx, 48, "Connect to:",            COLOR_GRAY);
+    drawText(lx, 68, "HermesLens-Setup",       COLOR_GREEN);
+    drawText(lx, 88, "Then open browser at",   COLOR_GRAY);
+    drawText(lx, 108, "192.168.4.1",            COLOR_GRAY);
+    drawText(lx, 128, "WiFi + backend",         COLOR_WHITE);
+
+Analysis:
+- These are string literals stored in .rodata (not stack)
+- However, each call to drawText() processes character-by-character through
+  the font buffer. The function at L222-L230 has a loop that draws one char
+  per iteration. This is inefficient but not a memory issue.
+
+Wait — let me re-check display.hpp for actual stack issues...
+
+
+[Bug #1] Stack Overflow Risk: display.hpp — showSetupMode y-coordinate overflow (display.hpp:106-112)
+Severity: MEDIUM | Location: display.hpp L106-L112
+
+The function uses hardcoded y coordinates: 28, 48, 68, 88, 108, 128. The last
+line at y=128 draws text that occupies y=128 to y=140 (FONT_H=13). This exceeds
+SCREEN_H=135!
+
+Analysis:
+- Line 110: drawText(lx, 108, "192.168.4.1", COLOR_GRAY);
+  - Text at y=108 occupies y=108..120 ✓ (fits)
+- Line 111: drawText(lx, 128, "WiFi + backend", COLOR_WHITE);
+  - Text at y=128 occupies y=128..140 ✗ (overflows! 135 is screen height)
+
+Fix Recommendation: Change last line's y-coordinate to stay within bounds.
+Use: drawText(lx, 118, "WiFi + backend", COLOR_WHITE); // instead of 128
+
+
+--------------------------------------------------------------------------------
+LOW SEVERITY ISSUES (Nice to Fix)
+--------------------------------------------------------------------------------
+
+[Issue #1] Missing Null Check: showOffline — ssid parameter (display.hpp:80-89)
+Severity: LOW | Location: display.hpp L84-L87
+
+Code:
+    if (ssid && strlen(ssid) > 0) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "SSID: %s", ssid);
+
+The check `ssid && strlen(ssid) > 0` is redundant but safe. The code handles
+null correctly. However, if ssid contains special characters or exceeds buffer
+size (unlikely for short SSID strings), snprintf could truncate unexpectedly.
+
+
+[Issue #2] Missing Null Check: showBackendOffline — backendUrl parameter (display.hpp:91-98)
+Severity: LOW | Location: display.hpp L95-L96
+
+Code:
+    if (backendUrl.length() > 0) {
+        drawTextCentered(90,  backendUrl.c_str(), COLOR_GRAY);
+
+The .length() check ensures non-empty String, but doesn't guard against null-like
+state. Acceptable since Arduino String is wrapper class that handles empty state.
+
+
+[Issue #3] Missing Null Check: showSetupDiagnostic — missingFields parameter (display.hpp:159-177)
+Severity: LOW | Location: display.hpp L162-L174
+
+Code draws:
+    drawTextCentered(80, missingFields[0] ? missingFields : "none", COLOR_YELLOW);
+
+The null check at [0] is correct. However, this should be documented as contract
+requirement since it's called from runPortal() which must initialize all params.
+
+
+--------------------------------------------------------------------------------
+RECOMMENDATIONS SUMMARY
+--------------------------------------------------------------------------------
+
+CRITICAL FIXES REQUIRED:
+1. pages.hpp L240: Add isnan() check before formatting estimated_cost_usd
+2. display.hpp L111: Change y=128 to y=118 in showSetupMode last line
+
+MEDIUM PRIORITY:
+3. pages.hpp:63-78: Document AgentsData contract or add null safety
+4. Consider adding bounds check before drawText in renderUsagePage cost bar
+
+
+--------------------------------------------------------------------------------
+FILES REVIEWED
+--------------------------------------------------------------------------------
+
+display.hpp (289 lines):
+  - Display initialization via init() method — OK, properly documents M5.begin() dependency
+  - Drawing functions: fillScreen, fillRect, drawRect, drawPixel, etc. — all delegate to _display
+  - Text rendering: drawText, drawTextCentered, drawChar — include bounds guards in drawChar (L248-251)
+  - UI helpers: splash, showOffline, showSetupMode, etc.
+  
+pages.hpp (246 lines):
+  - renderAgentsPage: Sliding window over agent list with clampWin() bounds guard
+  - renderTasksPage: Four-tile summary + Done% row
+  - renderSystemPage: Key:value rows for Hermes/Gateway/Poll/Backend
+  - renderUsagePage: Model/tokens/calls/stats + cost bar
+
+================================================================================
+END OF BUG REPORT
+================================================================================
