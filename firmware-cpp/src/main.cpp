@@ -67,6 +67,7 @@ static uint32_t    _lastDiagPollMs   = 0;
 static const uint32_t DIAG_FLIP_MS  = 10000;   // auto-cycle every 10 s when connected OK
 static bool          _dashDirty     = true;    // force first OK-paint
 static uint8_t       _lastRes       = 99;          // dashboard pageId
+static bool          _hasPolled     = false;       // show “Connecting…” until first API reply
 static int           _lastAgentWin  = -1;
 static int           _lastAgentCount= -1;
 
@@ -218,6 +219,7 @@ void loop() {
         if (wifiOK && now - _lastPoll > POLL_MS) {
             _lastPoll = now;
             lastStatus = api.fetchStatus();
+            _hasPolled = true;
             Serial.printf("[main] API poll  result=%d  agents=%d\n",
                           (int)lastStatus.result,
                           (int)lastStatus.agents.agents.size());
@@ -283,7 +285,9 @@ void loop() {
 
         } else if (lastStatus.result != ApiResult::OK) {
             // Build strings once outside switch
-            String errLbl   = errorLabel(lastStatus.result);
+            String errLbl   = (!_hasPolled)
+                               ? "Connecting..."
+                               : errorLabel(lastStatus.result);
             const char* httpStr = lastStatus.http_code > 0
                                    ? String("HTTP " + String(lastStatus.http_code)).c_str()
                                    : "";
