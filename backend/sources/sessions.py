@@ -145,6 +145,7 @@ class SessionsCollector:
                 "tokens_output": int(agg[1]),
                 "tool_calls_total": int(agg[2]),
                 "estimated_cost_usd": float(cost_agg[0]) if cost_agg and cost_agg[0] is not None else 0.0,
+                "session_cost_usd": float(recent_sessions[0]["estimated_cost_usd"]) if recent_sessions and recent_sessions[0].get("estimated_cost_usd") is not None else 0.0,
             }
             
         except (sqlite3.Error, IOError) as e:

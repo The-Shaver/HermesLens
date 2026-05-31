@@ -46,6 +46,7 @@ struct SessionsData {
     int   tokens_output;
     int   tool_calls_total;
     float estimated_cost_usd;
+    float session_cost_usd;
 };
 
 struct HeaderBlock {
@@ -66,6 +67,7 @@ struct ApiStatus {
     String            error_text;          // human-readable error for display
     String            version;
     String            hermes_version;
+    String            current_model;
     String            gateway_state;
     SessionsData      sessions;
     TasksData         tasks;
@@ -128,7 +130,7 @@ public:
         }
 
         // Stream into a DynamicJsonDocument (ESP32 has enough PSRAM for ~16 KB)
-        DynamicJsonDocument doc(16384);
+        DynamicJsonDocument doc(24576);
         WiFiClient* stream = http.getStreamPtr();
         DeserializationError err = deserializeJson(doc, *stream);
         http.end();
@@ -142,6 +144,7 @@ public:
         out.result      = ApiResult::OK;
         out.version     = doc["version"]          | "";
         out.hermes_version = doc["hermes_version"] | "";
+        out.current_model  = doc["current_model"]  | "";
 
         JsonObject gw = doc["gateway"];
         out.gateway_state = gw["state"] | "unknown";
@@ -175,10 +178,12 @@ public:
         out.sessions.tokens_input         = js["tokens_input"]          | 0;
         out.sessions.tokens_output        = js["tokens_output"]         | 0;
         out.sessions.tool_calls_total     = js["tool_calls_total"]      | 0;
-        // ArduinoJson float→String→float is broken on ESP32 Arduino cores.
-        // Extract as C-string then call atof().
-        { const char* sc = js["estimated_cost_usd"] | "0.0";
-          out.sessions.estimated_cost_usd = atof(sc); }
+        out.sessions.estimated_cost_usd   = js["estimated_cost_usd"]    | 0.0f;
+        out.sessions.session_cost_usd     = js["session_cost_usd"]      | 0.0f;
+        Serial.printf("[status] model='%s'  overall=%.2f  session=%.2f\n",
+                      out.current_model.c_str(),
+                      (double)out.sessions.estimated_cost_usd,
+                      (double)out.sessions.session_cost_usd);
 
         return out;
     }

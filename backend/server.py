@@ -193,6 +193,8 @@ async def get_status(request: Request):
         "sessions": sessions_data,
         "tasks": kanban_data,
         "agents": profiles_data,
+        "current_model": (sessions_data.get("recent") or [{}])[0].get("model") or "",
+        "session_cost_usd": (sessions_data.get("session_cost_usd") if sessions_data.get("session_cost_usd") is not None else (sessions_data.get("recent") or [{}])[0].get("estimated_cost_usd") or 0.0),
     }
 
 

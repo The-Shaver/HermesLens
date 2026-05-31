@@ -93,9 +93,10 @@ static inline void renderAgentsPage(const AgentsData& agents,
         tag[sizeof(tag) - 1] = '\0';
         display.drawText(12, y, tag, hdrCol);
 
-        // Role right of name
+        // Role right of name, only if it fully fits before right margin
         int nx = 12 + (int)strlen(tag) * FONT_W + 2;
-        if (nx < (int)SCREEN_W - 3 - FONT_W)
+        int roleW = display.textWidth(a.role.c_str());
+        if (nx + roleW < SCREEN_W - 4)
             display.drawText(nx, y, a.role.c_str(), COLOR_ORANGE);
 
         y += AGENT_LINE_H;
@@ -134,20 +135,20 @@ static inline void renderTasksPage(const TasksData& tasks,
     { char buf[20]; snprintf(buf, sizeof(buf), "%d total", total);
       display.drawText(4, HEADER_H + 2, buf, COLOR_DIM); }
 
-    constexpr uint8_t TW = 54;        // tile inner width
-    constexpr uint8_t G  =  5;        // tile gap
-    constexpr uint8_t TH = 26;        // tile inner height
-    const uint8_t by0   = HEADER_H + 14;  // tile row 0 top
+    constexpr uint8_t TW = 62;        // tile inner width
+    constexpr uint8_t G  =  7;        // tile gap
+    constexpr uint8_t TH = 30;        // tile inner height
+    const uint8_t by0   = HEADER_H + 22;  // tile row 0 top
 
     auto tile = [&](uint8_t i, const char* label, uint16_t labelC,
                     int value, uint16_t valueC, uint16_t borderC) {
         uint8_t bx = 4 + i * (TW + G);
         display.fillRect(bx, by0, TW, TH + 6, COLOR_CARD);
         display.drawRect(bx, by0, TW, TH + 6, borderC);
-        display.drawText(bx + 3, by0 + 2, label, labelC);
+        display.drawTextCenteredAt(bx + 3, by0 + 3, bx + TW - 3, label, labelC);
         char vb[6]; snprintf(vb, sizeof(vb), "%d", value);
         uint16_t vw = strlen(vb) * FONT_W;
-        display.drawText(bx + 3 + (TW - vw) / 2, by0 + 9, vb, valueC);
+        display.drawText(bx + 3 + (TW - vw) / 2, by0 + 17, vb, valueC);
     };
 
     tile(0, "To do",   COLOR_DIM,        todo,   COLOR_YELLOW, COLOR_GRAY);
@@ -190,7 +191,9 @@ static inline void renderSystemPage(const ApiStatus& status,
     int y = HEADER_H + 4;
     for (auto &r : rows) {
         display.drawText(4, y, r.label, COLOR_DIM);
-        int vx = 4 + FONT_W * 3;   // col 24 — past the label zone
+        int tw = display.textWidth(r.val);
+        int vx = SCREEN_W - tw - 6;
+        if (vx < 70) vx = 70;
         display.drawText(vx, y, r.val, hdrCol);
         y += 14;
         if (y > (int)SCREEN_H - FONT_H - 2) break;
@@ -208,15 +211,13 @@ static inline void renderUsagePage(const ApiStatus& status,
     display.drawHeader(isActive ? "Usage" : "Usage  --");
     display.drawPageIndicator(pageId, PAGES);
 
-    // Sub-header: model name
-    const char* model = status.hermes_version.length() > 0
-                        ? status.hermes_version.c_str() : "--";
+    // Sub-header: current model
     {
         const char* lbl = "Model:";
         display.drawText(4, HEADER_H + 2, lbl, COLOR_DIM);
-        char extra[16];
-        snprintf(extra, sizeof(extra), "  %s", model);
-        display.drawText(4 + FONT_W * 3, HEADER_H + 2, extra, COLOR_WHITE);
+        const char* model = status.current_model.length() > 0
+                            ? status.current_model.c_str() : "--";
+        display.drawText(4 + FONT_W * 6, HEADER_H + 2, model, COLOR_WHITE);
     }
 
     struct { const char* label; unsigned long val; } statRows[] = {
@@ -225,14 +226,30 @@ static inline void renderUsagePage(const ApiStatus& status,
         { "API calls",status.sessions.tool_calls_total  },
     };
 
-    int y = HEADER_H + 16;
+    int y = HEADER_H + 18;
     for (auto &s : statRows) {
         display.drawText(4, y, s.label, COLOR_DIM);
         char sb[16];
         snprintf(sb, sizeof(sb), "%lu", s.val);
-        display.drawText(60, y, sb, COLOR_WHITE);
+        int tw = display.textWidth(sb);
+        int vx = SCREEN_W - tw - 6;
+        if (vx < 72) vx = 72;
+        display.drawText(vx, y, sb, COLOR_WHITE);
         y += 14;
         if (y > (int)SCREEN_H - FONT_H - 4) break;
+    }
+
+    // Session cost row
+    {
+        float sc = status.sessions.session_cost_usd;
+        char scStr[16];
+        snprintf(scStr, sizeof(scStr), "%.2f", isnan(sc) ? 0.0f : sc);
+        display.drawText(4, y, "Session", COLOR_DIM);
+        int tw = display.textWidth(scStr);
+        int vx = SCREEN_W - tw - 6;
+        if (vx < 72) vx = 72;
+        display.drawText(vx, y, scStr, COLOR_WHITE);
+        y += 14;
     }
 
     // Cost bar at bottom
@@ -240,7 +257,7 @@ static inline void renderUsagePage(const ApiStatus& status,
         int bx = 4, bw = SCREEN_W - 8, by = y + 2;
         display.fillRect(bx, by, bw, FONT_H + 4, COLOR_CARD);
         display.drawRect(bx, by, bw, FONT_H + 4, COLOR_GRAY);
-        display.drawText(8, by + 2, "Cost  $", COLOR_DIM);
+        display.drawText(8, by + 2, "Overall $", COLOR_DIM);
         char cb[16];
         float cost = status.sessions.estimated_cost_usd;
         snprintf(cb, sizeof(cb), "%.2f", isnan(cost) ? 0.0f : cost);

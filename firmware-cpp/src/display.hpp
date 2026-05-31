@@ -236,6 +236,14 @@ public:
         drawText(x, y, str, color);
     }
 
+    void drawTextCenteredAt(int16_t x0, int16_t y0, int16_t x1, const char* str, uint16_t color) {
+        uint16_t tw = textWidth(str);
+        int16_t avail = (int16_t)((int16_t)x1 - (int16_t)x0);
+        int16_t x = (avail - (int16_t)tw) / 2 + (int16_t)x0;
+        if (x < (int16_t)x0) x = (int16_t)x0;
+        drawText(x, y0, str, color);
+    }
+
     void drawTextRight(int16_t y, const String& str, uint16_t color) {
         uint16_t tw = textWidth(str.c_str());
         int16_t x = _w - (int16_t)tw - 2;
