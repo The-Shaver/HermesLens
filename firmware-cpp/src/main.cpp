@@ -65,6 +65,10 @@ static bool        _btnA_wasReleased = true;  // front  / left  = next page
 static bool        _btnB_wasReleased = true;  // side   / right = prev page
 static uint32_t    _lastDiagPollMs   = 0;
 static const uint32_t DIAG_FLIP_MS  = 10000;   // auto-cycle every 10 s when connected OK
+static bool          _dashDirty     = true;    // force first OK-paint
+static uint8_t       _lastRes       = 99;          // dashboard pageId
+static int           _lastAgentWin  = -1;
+static int           _lastAgentCount= -1;
 
 // ── Agent page sliding window ────────────────────────────────
 static int _agentWin = 0;   // first visible agent row
@@ -138,17 +142,21 @@ void setup() {
     // ── WiFi ─────────────────────────────────────────────────────
     phase = PHASE_WIFI;
     wifi.begin(WIFI_MODE_STA);
+    api.setUrl(cfg.backend_url);
 
     phase = PHASE_HEALTH_CHECK;
     lastStatus.result = ApiResult::CONNECT_ERROR;
 
     phase = PHASE_DASHBOARD;
+    display.fillScreen(COLOR_BG);  // initial clear before first dashboard render
 }
 
 // ═══════════════════════════════════════════════════════════════
 // loop()
 // ═══════════════════════════════════════════════════════════════
 void loop() {
+    M5.update();  // refresh button state before reading wasReleased()
+
     switch (phase) {
     case PHASE_BOOT:
         // Already handled in setup()
@@ -215,6 +223,7 @@ void loop() {
                           (int)lastStatus.agents.agents.size());
             // auto-cycle to overview after each new poll
             _diagPage = DIAG_OVERVIEW;
+            _dashDirty = true;  // poll data may have changed
             _lastDiagPollMs = now;
         }
 
@@ -331,23 +340,36 @@ void loop() {
             if (pageId == (uint8_t)DIAG_OVERVIEW && !prev_A && _btnA_wasReleased) {
                 if (_agentWin + AGENTS_PG_VIS < (int)lastStatus.agents.agents.size())
                     _agentWin += 2;
+                _dashDirty = true;
             }
             if (pageId == (uint8_t)DIAG_OVERVIEW && !prev_B && _btnB_wasReleased) {
                 _agentWin = clampWin(_agentWin - 2,
                     (int)lastStatus.agents.agents.size(), AGENTS_PG_VIS);
+                _dashDirty = true;
             }
             // Reset scroll when leaving Agents tab
             if (pageId != (uint8_t)DIAG_OVERVIEW)
                 _agentWin = 0;
 
-            switch ((int)pageId) {
-            case 0:  renderAgentsPage(lastStatus.agents, pageId, true, _agentWin); break;
-            case 1:  renderTasksPage  (lastStatus.tasks,  pageId, true);       break;
-            case 2:  renderSystemPage (lastStatus, cfg,     pageId, true);    break;
-            case 3:  renderUsagePage  (lastStatus,          pageId, true);    break;
+            // Mark dirty when data, page, or window actually changed
+            if (pageId         != _lastRes) _dashDirty = true;
+            if (_agentWin      != _lastAgentWin) _dashDirty = true;
+            if (lastStatus.agents.agents.size() != (size_t)_lastAgentCount) _dashDirty = true;
+            _lastRes = pageId; _lastAgentWin = _agentWin;
+            _lastAgentCount = (int)lastStatus.agents.agents.size();
+
+            if (_dashDirty) {
+                _dashDirty = false;
+                switch ((int)pageId) {
+                case 0:  renderAgentsPage(lastStatus.agents, pageId, true, _agentWin); break;
+                case 1:  renderTasksPage  (lastStatus.tasks,  pageId, true);       break;
+                case 2:  renderSystemPage (lastStatus, cfg,     pageId, true);    break;
+                case 3:  renderUsagePage  (lastStatus,          pageId, true);    break;
+                }
             }
         }
 
+        // Dashboard clean cycle — render path now does content‑area clears only
         delay(100);
         break;
     }

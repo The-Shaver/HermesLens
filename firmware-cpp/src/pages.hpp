@@ -61,8 +61,10 @@ static inline uint8_t dotsActive(int total, int winStart, int visible) {
  *  @param winStart  first visible row index, managed by main.cpp loop
  */
 static inline void renderAgentsPage(const AgentsData& agents,
-                                     uint8_t pageId, bool isActive, int winStart)
+                                    uint8_t pageId, bool isActive, int winStart)
 {
+    // Clear only the content area, not the full 240×135 frame
+    display.fillRect(0, HEADER_H + 2, SCREEN_W, SCREEN_H - HEADER_H - FONT_H - 2, COLOR_BG);
     int total = (int)agents.agents.size();
     int first = clampWin(winStart, total, AGENTS_PG_VIS);
 
@@ -118,6 +120,7 @@ static inline void renderAgentsPage(const AgentsData& agents,
 static inline void renderTasksPage(const TasksData& tasks,
                                     uint8_t pageId, bool isActive)
 {
+    display.fillRect(0, HEADER_H + 2, SCREEN_W, SCREEN_H - HEADER_H - FONT_H - 2, COLOR_BG);
     int todo   = tasks.ready + tasks.blocked;
     int active = tasks.in_progress;
     int doneN  = tasks.done;
@@ -171,6 +174,7 @@ static inline void renderSystemPage(const ApiStatus& status,
                                      const HermesConfig& cfg,
                                      uint8_t pageId, bool isActive)
 {
+    display.fillRect(0, HEADER_H + 4, SCREEN_W, SCREEN_H - HEADER_H - FONT_H - 2, COLOR_BG);
     uint16_t hdrCol = isActive ? COLOR_WHITE : COLOR_DIM;
     display.drawHeader(isActive ? "System" : "System  --");
     display.drawPageIndicator(pageId, PAGES);
@@ -199,6 +203,7 @@ static inline void renderSystemPage(const ApiStatus& status,
 static inline void renderUsagePage(const ApiStatus& status,
                                     uint8_t pageId, bool isActive)
 {
+    display.fillRect(0, HEADER_H + 2, SCREEN_W, SCREEN_H - HEADER_H - FONT_H - 2, COLOR_BG);
     uint16_t hdrCol = isActive ? COLOR_WHITE : COLOR_DIM;
     display.drawHeader(isActive ? "Usage" : "Usage  --");
     display.drawPageIndicator(pageId, PAGES);

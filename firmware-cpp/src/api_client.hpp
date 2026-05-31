@@ -104,12 +104,14 @@ public:
 
         HTTPClient http;
         String url = _baseUrl + "/api/status";
+        Serial.printf("[api] GET %s\n", url.c_str());
         http.begin(url);
         http.setTimeout(_timeoutMs);
         http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
 
         int code = http.GET();
-        out.http_code = code;          // always capture the raw HTTP code
+        out.http_code = code;
+        Serial.printf("[api] HTTP code=%d\n", code);
         if (code != HTTP_CODE_OK) {
             out.result     = ApiResult::HTTP_ERROR;
             out.error_text = "HTTP " + String(code);
