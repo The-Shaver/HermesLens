@@ -152,6 +152,34 @@ async def get_status(request: Request):
     except Exception:
         profiles_data = {"agents": [{"name": "Default", "role": "System"}]}
 
+    # Enrich agents with simple task/status data from kanban.
+    # Maps assignee -> current in-progress task, then stamps status/task_progress.
+    try:
+        in_progress_tasks = kanban_data.get("in_progress_with_assignee", [])
+    except Exception:
+        in_progress_tasks = []
+    assignee_task_map = {}
+    for t in in_progress_tasks:
+        assignee = (t.get("assignee") or "").strip()
+        if not assignee:
+            continue
+        title = (t.get("title") or "Working...")[:60]
+        if assignee not in assignee_task_map:
+            assignee_task_map[assignee] = title
+
+    for agent in profiles_data.get("agents", []):
+        name = agent.get("name", "")
+        task = assignee_task_map.get(name)
+        if task:
+            agent["status"] = "active"
+            agent["task_progress"] = 50
+            agent["current_task"] = task
+        else:
+            agent["status"] = "idle"
+            agent["task_progress"] = 0
+            agent["current_task"] = ""
+        agent["model"] = ""
+
     # --- Build response ---
     return {
         "version": VERSION,
