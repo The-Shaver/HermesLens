@@ -1,54 +1,65 @@
 """Gateway state data collector."""
 
 import json
+import logging
 from pathlib import Path
+
+logger = logging.getLogger("hermeslens")
+
+_GATEWAY_SCHEMA = {
+    "state": str,
+    "platforms": dict,
+    "active_agents": int,
+    "pid": (int, type(None)),
+    "updated_at": (str, type(None)),
+    "kind": (str, type(None)),
+}
 
 
 class GatewayCollector:
-    """Collects gateway state from ~/.hermes/gateway_state.json.
+    """Collects gateway state from ~/.hermes/gateway_state.json."""
 
-    Reads the JSON file to extract:
-    - gateway_state (running/stopped/etc)
-    - platforms (connection status per platform like discord, telegram)
-    - active_agents count
-    - pid and other metadata
-    """
-    
     def __init__(self, hermes_home: str):
         self.hermes_home = Path(hermes_home).expanduser()
         self.gateway_path = self.hermes_home / "gateway_state.json"
-    
-    def collect(self) -> dict:
-        """Collect gateway state data.
 
-        Returns a dictionary with gateway information, or defaults if file doesn't exist.
-        """
+    def collect(self) -> dict:
         default_result = {
             "state": "unknown",
             "platforms": {},
             "active_agents": 0,
         }
-        
+
         try:
             if not self.gateway_path.exists():
+                logger.warning("gateway state file missing: %s", self.gateway_path)
                 return default_result
-            
+
             with open(self.gateway_path) as f:
                 data = json.load(f)
-            
+
+            if not isinstance(data, dict):
+                logger.error("gateway state file is not a mapping: %s", self.gateway_path)
+                return default_result
+
             result = {
                 "state": data.get("gateway_state", "unknown"),
-                "platforms": {k: v.get("state", "disconnected") for k, v in data.get("platforms", {}).items()},
+                "platforms": {k: v.get("state", "disconnected") if isinstance(v, dict) else "disconnected"
+                              for k, v in data.get("platforms", {}).items()},
                 "active_agents": data.get("active_agents", 0),
             }
-            
-            # Include additional metadata if available
-            result["pid"] = data.get("pid")
-            result["updated_at"] = data.get("updated_at")
-            result["kind"] = data.get("kind")
-            
+
+            for key, typ in _GATEWAY_SCHEMA.items():
+                if key in ("state", "platforms", "active_agents"):
+                    continue
+                if key in data:
+                    result[key] = data[key]
+
             return result
-            
-        except (json.JSONDecodeError, IOError) as e:
-            # Return defaults on any error
+
+        except (json.JSONDecodeError, IOError) as exc:
+            logger.error("gateway collect failed: %s", exc)
+            return default_result
+        except Exception as exc:
+            logger.exception("gateway collect unexpected error: %s", exc)
             return default_result

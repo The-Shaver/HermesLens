@@ -4,62 +4,41 @@
 
 HermesLens is an open-source physical dashboard for Hermes Agent that runs on an M5 StickS3 device. It provides a real-time, glanceable view of your agent team, tasks, system health, and usage stats.
 
+The backend is a FastAPI service that reads live Hermes data from SQLite and local files, then exposes it over a simple HTTP API. The M5 StickS3 polls that API and renders a 4-page dashboard on its built-in display.
+
 ---
 
-## Design Decisions
+## Where config lives
 
-### Q1: Data Discovery
-- **Default**: Auto-detect Hermes home at `~/.hermes/` or `$HERMES_HOME` env var
-- **Override**: Optional `hermes_home` setting in `~/.hermeslens.yaml` for non-standard paths
-- **Never writes** to Hermes data — read-only data collection
+- Device config: stored in ESP32 NVS via the captive portal (WiFi SSID, WiFi password, backend URL). No YAML, no filesystem config on the device.
+- Backend config: none required beyond the path to the Hermes home directory. Defaults: host `0.0.0.0`, port `8123`.
+- No standalone `hermeslens` package or `pip install`. The backend runs from the repo (`python server.py`).
 
-### Q2: Agent Discovery
-- **Default**: Auto-discover all profiles from `~/.hermes/profiles/`
-- **Override**: Config filter to show only specific agents (`agents: [timmy, cooper]`)
-- **Fallback**: If no profiles found, show single "Default" agent
+---
 
-### Q3: Auth Model
-- **Default**: Bind to `127.0.0.1` only (localhost, no auth needed)
-- **Config option**: `host: 0.0.0.0` for LAN access
-- **Config option**: `api_key: <secret>` for optional token-based auth
-- Pattern matches Hermes dashboard's approach
+## Data Flow
 
-### Q4: Data Flow
-- **Poll model**: M5 fetches `/api/status` every N seconds (default ~10s)
-- Configurable refresh interval in `~/.hermeslens.yaml`
-- Simple, resilient, easy to debug
+1. M5 StickS3 connects to WiFi.
+2. It polls `GET /api/status` on the backend every ~10 seconds.
+3. The backend reads from `~/.hermes/state.db`, `~/.hermes/gateway_state.json`, and other Hermes data sources.
+4. The device renders Agents, Tasks, System, and Usage pages.
 
-### Q5: UI Layout (4 Pages + Navigation)
+---
+
+## UI Layout (4 Pages + Navigation)
 
 | # | Page | Content |
 |---|------|---------|
-| 1 | **Agents** | Agent team cards: name, role, status dot, progress bar, current task |
-| 2 | **Tasks** | Kanban summary: counts by status (ready/active/blocked/done), recent task updates |
-| 3 | **System** | Gateway state, connected platforms (Discord/Telegram/etc), active sessions, cron jobs |
-| 4 | **Usage** | Active model, session count, message/tool call counts, token usage, estimated cost |
+| 1 | Agents | Agent cards: name, role, status dot, progress, current task |
+| 2 | Tasks | Kanban summary: counts by status (ready/active/blocked/done) |
+| 3 | System | Gateway state, platforms, active sessions, cron jobs |
+| 4 | Usage | Active model, session cost, overall estimated cost, session count |
 
 **Navigation:**
-- **Touch left swipe** → Previous page
-- **Touch right swipe** → Next page
-- **Touch tap on agent** → Show agent detail overlay
 - **Front button (short)** → Next page
-- **Front button (long)** → Detail overlay for current item
 - **Side button (short)** → Previous page
+- **Front button (long)** → Detail overlay for current item
 - **Side button (long)** → Jump to Agents page (home)
-
-**Configurable pages order** — users can reorder or disable in config.
-**No auto-cycle** by default (configurable option added later).
-
-### Q6: Config Format
-- **YAML** at `~/.hermeslens.yaml`
-- Comments supported
-- One file, simple, discoverable
-
-### Q7: Installation Method
-- **Primary**: `pip install hermeslens` standalone package
-  - Run with `hermeslens` or `python -m hermeslens`
-- **M5 firmware** as subfolder within the same repository
-- **Future option**: Hermes plugin integration
 
 ---
 
@@ -69,23 +48,21 @@ The HermesLens backend exposes a FastAPI server:
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/status` | Full dashboard data (all pages in one call) |
 | `GET /api/health` | Backend liveness check |
+| `GET /api/status` | Full dashboard data (all pages in one call) |
 
 ### `/api/status` Response Shape
 
 ```json
 {
   "version": "0.1.0",
-  "hermes_version": "0.13.0",
-  "hermes_home": "/home/user/.hermes",
+  "current_model": "stepfun/step-3.5-flash",
   "gateway": {
     "state": "running",
     "platforms": {
       "discord": "connected",
       "telegram": "disconnected"
-    },
-    "active_agents": 2
+    }
   },
   "agents": [
     {
@@ -94,7 +71,6 @@ The HermesLens backend exposes a FastAPI server:
       "status": "active",
       "current_task": "Deploying theme fix",
       "task_progress": 42,
-      "last_active": "2026-05-14T15:30:00Z",
       "model": "stepfun/step-3.5-flash"
     }
   ],
@@ -124,65 +100,76 @@ The HermesLens backend exposes a FastAPI server:
     "tokens_input": 1200000,
     "tokens_output": 456000,
     "estimated_cost_usd": 0.87,
-    "sessions_today": 12
+    "session_cost_usd": 0.00
   }
 }
 ```
 
----
-
-## Project Structure
-```mermaid
-flowchart LR
-  H[~/.hermes/ data] --> Backend
-  Backend -->|poll every ~10s| M5[M5 StickS3]
-```
-
-**Hermes home** is read-only.
-**M5** reads `/api/status`, renders the dashboard.
+Notes:
+- `current_model` is derived from the most recent session.
+- `session_cost_usd` is the current session cost, falling back to the most recent session if no open session exists.
+- `agents` entries are enriched server-side by joining agent profiles with in-progress kanban tasks.
 
 ---
 
 ## Data Sources
 
-| Source | Path | Access Method | Data |
-|--------|------|---------------|------|
-| Gateway state | `~/.hermes/gateway_state.json` | JSON read | Running state, platforms, active_agents count |
-| Sessions | `~/.hermes/state.db` | SQLite query | Sessions, messages, token counts, timestamps (only recent data — last 100 sessions) |
-| Kanban tasks | `~/.hermes/kanban.db` (tasks table) | SQLite query | Task title, assignee, status, priority |
-| Kanban runs | `~/.hermes/kanban.db` (task_runs table) | SQLite query | Run history, success/failure outcomes |
-| Cron jobs | `~/.hermes/cron/` | Directory scan + JSON parse | Job schedules, scripts, status |
-| Profiles | `~/.hermes/profiles/` | Directory listing | Agent names and role inference from configs |
+| Source | Path | Data |
+|--------|------|------|
+| Gateway state | `~/.hermes/gateway_state.json` | Running state, connected platforms |
+| Sessions | `~/.hermes/state.db` | Recent sessions, messages, token counts, cost |
+| Kanban tasks | `~/.hermes/kanban.db` | Task title, assignee, status, priority, recent runs |
+| Cron jobs | `~/.hermes/cron/` | Job schedules, scripts |
+| Profiles | `~/.hermes/profiles/` | Agent names, roles |
+
+**Hermes home is read-only**. HermesLens only reads data; it never writes to `~/.hermes`.
 
 ---
 
-## Phases
+## Project Structure
 
-### Phase 0: Design ✅
-- [x] Project named: HermesLens
-- [x] Architecture: backend + C++ firmware on M5 StickS3
-- [x] API schema and data sources defined
+```
+hermeslens/
+├── README.md              ← Project overview and quick start
+├── DESIGN.md              ← Design decisions and API contract
+├── FLASH_INSTRUCTIONS.md  ← Detailed flashing guide
+│
+├── backend/               ← Python FastAPI data service
+│   ├── server.py          ← FastAPI app; /api/health and /api/status
+│   ├── config.py          ← Config loader with validation
+│   ├── requirements.txt   ← fastapi, uvicorn, pyyaml
+│   └── sources/           ← Data collectors
+│       ├── gateway.py     ← gateway_state.json
+│       ├── sessions.py    ← state.db
+│       ├── kanban.py      ← kanban.db
+│       └── profiles.py    ← ~/.hermes/profiles/
+│
+└── firmware-cpp/          ← ESP32-S3 firmware (PlatformIO)
+    ├── platformio.ini
+    └── src/
+        ├── config.hpp     ← NVS storage via Preferences.h
+        ├── display.hpp    ← Page renderers, palette, fonts
+        ├── setup_portal.hpp ← Captive AP + form save
+        ├── wifi_manager.hpp
+        ├── api_client.hpp
+        └── pages.hpp
+```
 
-### Phase 1: Backend ✅
-- [x] FastAPI server with `/api/status` and `/api/health`
-- [x] Config loader (YAML)
-- [x] Data collectors: gateway, sessions, kanban, profiles, cron
-- [x] Graceful defaults when Hermes data is missing
+---
 
-### Phase 2: Firmware ✅
-- [x] C++ / PlatformIO rewrite
-- [x] WiFi STA + AP captive portal
-- [x] NVS config persistence
-- [x] 4-page dashboard (Agents, Tasks, System, Usage)
-- [x] Touch + physical button navigation
+## Flash Layout
 
-### Phase 3: Polish 🔜 Next
-- [ ] Backend schema verified against live Hermes data
-- [ ] End-to-end hardware test
-- [ ] Error screens + loading states
-- [ ] Final docs cleanup
+End users flash the M5 StickS3 with three files:
 
-### Phase 4: Release ⏳
-- [ ] GitHub repo
-- [ ] Community flash package
-- [ ] Demo media
+| File | Offset |
+|------|--------|
+| `bootloader.bin` | `0x0000` |
+| `partitions.bin` | `0x8000` |
+| `firmware.bin` | `0x00010000` |
+
+- Single-file merge was investigated and deemed unreliable; this repo keeps the 3-file process.
+- No erase step is required before flashing.
+
+---
+
+The 3-file flash process is intentional; no auto-merge at build time.

@@ -4,10 +4,12 @@ Aggregates data from Hermes Agent sources and exposes a clean REST API
 for the M5 StickS3 dashboard display.
 """
 
-import json
+import logging
+import traceback
+from contextlib import suppress
+
 import os
 import sys
-import signal
 from pathlib import Path
 
 # Ensure backend package is importable
@@ -27,7 +29,6 @@ from sources.sessions import SessionsCollector
 from sources.kanban import KanbanCollector
 from sources.profiles import ProfilesCollector
 
-
 try:
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
@@ -36,6 +37,13 @@ except ImportError:
     print("HermesLens requires fastapi and uvicorn.")
     print("Install with: pip install fastapi uvicorn[standard]")
     sys.exit(1)
+
+logger = logging.getLogger("hermeslens")
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 # Version
 VERSION = "0.1.0"
@@ -63,7 +71,7 @@ _profiles: ProfilesCollector | None = None
 _config: dict | None = None
 
 
-def _init_collectors():
+def _init_collectors() -> None:
     """Initialize or reinitialize all data collectors."""
     global _gateway, _sessions, _kanban, _profiles, _config
     _config = load_config()
@@ -80,7 +88,9 @@ def _get_hermes_version() -> str:
         import subprocess
         result = subprocess.run(
             ["hermes", "--version"],
-            capture_output=True, text=True, timeout=5
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             line = result.stdout.strip()
@@ -95,13 +105,43 @@ def _get_hermes_version() -> str:
 
 
 @app.on_event("startup")
-async def startup():
-    """Initialize collectors on server start."""
+async def startup() -> None:
+    """Initialize collectors on server start and log config summary."""
     _init_collectors()
+    _log_startup_checks()
+    _log_schema_contract()
+    logger.info(
+        "startup hermes_home=%s host=%s port=%s",
+        resolve_hermes_home(),
+        get_host(),
+        get_port(),
+    )
+
+
+def _log_startup_checks() -> None:
+    hermes_home = resolve_hermes_home()
+    home = Path(hermes_home)
+    if not home.exists() or not home.is_dir():
+        logger.warning("hermes_home missing or not a directory: %s", hermes_home)
+        return
+
+    expected = [home / "state.db", home / "kanban.db", home / "gateway_state.json"]
+    for path in expected:
+        if path.exists():
+            logger.info("found %s", path)
+        else:
+            logger.warning("missing %s", path)
+
+
+def _log_schema_contract() -> None:
+    logger.info(
+        "schema contract /api/status version=%s",
+        VERSION,
+    )
 
 
 @app.get("/api/health")
-async def health():
+async def health() -> dict:
     """Simple liveness check."""
     return {
         "status": "ok",
@@ -110,97 +150,187 @@ async def health():
 
 
 @app.get("/api/status")
-async def get_status(request: Request):
+async def get_status(request: Request) -> dict:
     """Main dashboard endpoint — returns all HermesLens data in one call.
 
     The M5 StickS3 polls this endpoint every N seconds to refresh the display.
     """
-    # --- Auth check ---
     api_key = get_api_key()
     if api_key:
         req_key = request.headers.get("X-API-Key", "")
         if req_key != api_key:
             raise HTTPException(status_code=401, detail="Invalid API key")
 
-    # Ensure collectors are initialized
     if _gateway is None:
         _init_collectors()
 
-    # --- Collect from all sources ---
-    try:
-        gateway_data = _gateway.collect()
-    except Exception:
-        gateway_data = {"state": "error", "platforms": {}, "active_agents": 0}
+    config = _config or load_config()
 
-    try:
-        sessions_data = _sessions.collect()
-    except Exception:
-        sessions_data = {"total": 0, "active": 0, "today": 0, "recent": [],
-                         "tokens_input": 0, "tokens_output": 0,
-                         "tool_calls_total": 0, "estimated_cost_usd": 0.0}
+    gateway_data = _safe_collect(_gateway, "gateway", {"state": "error", "platforms": {}, "active_agents": 0})
+    sessions_data = _safe_collect(
+        _sessions,
+        "sessions",
+        {
+            "total": 0,
+            "active": 0,
+            "today": 0,
+            "recent": [],
+            "tokens_input": 0,
+            "tokens_output": 0,
+            "tool_calls_total": 0,
+            "estimated_cost_usd": 0.0,
+        },
+    )
+    kanban_data = _safe_collect(
+        _kanban,
+        "kanban",
+        {
+            "ready": 0,
+            "in_progress": 0,
+            "blocked": 0,
+            "done": 0,
+            "archived": 0,
+            "recent": [],
+            "in_progress_with_assignee": [],
+            "runs_recent": [],
+        },
+    )
 
-    try:
-        kanban_data = _kanban.collect_all()
-    except Exception:
-        kanban_data = {"ready": 0, "in_progress": 0, "blocked": 0, "done": 0,
-                        "archived": 0, "recent": [],
-                        "in_progress_with_assignee": [], "runs_recent": []}
+    agent_filter = config.get("agents", []) if isinstance(config, dict) else []
+    profiles_data = _safe_collect(
+        _profiles,
+        "profiles",
+        {"agents": [{"name": "Default", "role": "System"}]},
+        agent_filter=agent_filter or None,
+    )
 
-    try:
-        agent_filter = _config.get("agents", []) if _config else []
-        profiles_data = _profiles.collect(agent_filter=agent_filter or None)
-    except Exception:
-        profiles_data = {"agents": [{"name": "Default", "role": "System"}]}
-
-    # Enrich agents with simple task/status data from kanban.
-    # Maps assignee -> current in-progress task, then stamps status/task_progress.
-    try:
-        in_progress_tasks = kanban_data.get("in_progress_with_assignee", [])
-    except Exception:
-        in_progress_tasks = []
+    in_progress_tasks = _safe_get(kanban_data, "in_progress_with_assignee", [])
     assignee_task_map = {}
-    for t in in_progress_tasks:
-        assignee = (t.get("assignee") or "").strip()
+    for task in in_progress_tasks:
+        assignee = (task.get("assignee") or "").strip()
         if not assignee:
             continue
-        title = (t.get("title") or "Working...")[:60]
         if assignee not in assignee_task_map:
-            assignee_task_map[assignee] = title
+            assignee_task_map[assignee] = (task.get("title") or "Working...")[:60]
 
     for agent in profiles_data.get("agents", []):
         name = agent.get("name", "")
         task = assignee_task_map.get(name)
-        if task:
-            agent["status"] = "active"
-            agent["task_progress"] = 50
-            agent["current_task"] = task
-        else:
-            agent["status"] = "idle"
-            agent["task_progress"] = 0
-            agent["current_task"] = ""
+        agent["status"] = "active" if task else "idle"
+        agent["task_progress"] = 50 if task else 0
+        agent["current_task"] = task or ""
         agent["model"] = ""
 
-    # --- Build response ---
     return {
         "version": VERSION,
         "hermes_version": _get_hermes_version(),
         "hermes_home": resolve_hermes_home(),
         "config": {
-            "refresh_interval": _config.get("refresh_interval", 10) if _config else 10,
-            "pages": _config.get("pages", ["agents", "tasks", "system", "usage"]) if _config else ["agents", "tasks", "system", "usage"],
+            "refresh_interval": config.get("refresh_interval", 10) if isinstance(config, dict) else 10,
+            "pages": config.get("pages", ["agents", "tasks", "system", "usage"]) if isinstance(config, dict) else ["agents", "tasks", "system", "usage"],
         },
         "gateway": gateway_data,
         "sessions": sessions_data,
         "tasks": kanban_data,
         "agents": profiles_data,
         "current_model": (sessions_data.get("recent") or [{}])[0].get("model") or "",
-        "session_cost_usd": (sessions_data.get("session_cost_usd") if sessions_data.get("session_cost_usd") is not None else (sessions_data.get("recent") or [{}])[0].get("estimated_cost_usd") or 0.0),
+        "session_cost_usd": _session_cost(sessions_data),
     }
+
+    payload = {
+        "version": VERSION,
+        "hermes_version": _get_hermes_version(),
+        "hermes_home": resolve_hermes_home(),
+        "config": {
+            "refresh_interval": config.get("refresh_interval", 10) if isinstance(config, dict) else 10,
+            "pages": config.get("pages", ["agents", "tasks", "system", "usage"]) if isinstance(config, dict) else ["agents", "tasks", "system", "usage"],
+        },
+        "gateway": gateway_data,
+        "sessions": sessions_data,
+        "tasks": kanban_data,
+        "agents": profiles_data,
+        "current_model": (sessions_data.get("recent") or [{}])[0].get("model") or "",
+        "session_cost_usd": _session_cost(sessions_data),
+    }
+
+    try:
+        _validate_status_response(payload)
+    except Exception as exc:
+        logger.exception("/api/status schema validation failed: %s", exc)
+
+    return payload
+
+
+def _safe_collect(collector, name: str, default: dict, **kwargs):
+    """Run collector.collect(), log tracebacks, return defaults on failure."""
+    try:
+        if kwargs:
+            return collector.collect(**kwargs)
+        return collector.collect()
+    except Exception:
+        logger.exception("collector failed: %s", name)
+        return default
+
+
+def _safe_get(data: dict, key: str, default):
+    try:
+        value = data.get(key, default)
+        return value if value is not None else default
+    except Exception:
+        return default
+
+
+def _session_cost(sessions_data: dict) -> float:
+    try:
+        value = sessions_data.get("session_cost_usd")
+        if value is not None:
+            return float(value)
+        recent = sessions_data.get("recent") or [{}]
+        value = (recent[0].get("estimated_cost_usd"))
+        if value is not None:
+            return float(value)
+    except Exception:
+        pass
+    return 0.0
+
+
+def _validate_status_response(data: dict) -> None:
+    expected_keys = {
+        "version": str,
+        "hermes_version": str,
+        "hermes_home": str,
+        "config": dict,
+        "gateway": dict,
+        "sessions": dict,
+        "tasks": dict,
+        "agents": dict,
+        "current_model": str,
+        "session_cost_usd": float,
+    }
+
+    missing = [k for k in expected_keys if k not in data]
+    if missing:
+        logger.error("/api/status response missing keys: %s", ", ".join(missing))
+        raise ValueError(f"/api/status missing keys: {', '.join(missing)}")
+
+    if not isinstance(data.get("config"), dict):
+        raise ValueError("/api/status config must be a mapping")
+    if not isinstance(data.get("gateway"), dict):
+        raise ValueError("/api/status gateway must be a mapping")
+    if not isinstance(data.get("sessions"), dict):
+        raise ValueError("/api/status sessions must be a mapping")
+    if not isinstance(data.get("tasks"), dict):
+        raise ValueError("/api/status tasks must be a mapping")
+    if not isinstance(data.get("agents"), dict):
+        raise ValueError("/api/status agents must be a mapping")
+    if "agents" in data.get("agents", {}) and not isinstance(data["agents"].get("agents"), list):
+        raise ValueError("/api/status agents.agents must be a list")
 
 
 @app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Catch-all error handler — never return 500 to the M5 StickS3."""
+    logger.exception("unhandled exception on %s", request.url.path)
     return JSONResponse(
         status_code=500,
         content={
@@ -210,21 +340,21 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-def main():
+def main() -> None:
     """Entry point for running the server."""
     import uvicorn
 
     port = get_port()
     host = get_host()
 
-    print(f"╔══════════════════════════════════════════╗")
-    print(f"║         HermesLens v{VERSION}             ║")
-    print(f"║  Physical Dashboard for Hermes Agent     ║")
-    print(f"╠══════════════════════════════════════════╣")
-    print(f"║  Server: http://{host}:{port}            ")
-    print(f"║  API:    http://{host}:{port}/api/status ")
-    print(f"║  Health: http://{host}:{port}/api/health ")
-    print(f"╚══════════════════════════════════════════╝")
+    print("╔══════════════════════════════════════════╗")
+    print("║         HermesLens v{}             ║".format(VERSION))
+    print("║  Physical Dashboard for Hermes Agent     ║")
+    print("╠══════════════════════════════════════════╣")
+    print("║  Server: http://{}:{}            ".format(host, port))
+    print("║  API:    http://{}:{}/api/status ".format(host, port))
+    print("║  Health: http://{}:{}/api/health ".format(host, port))
+    print("╚══════════════════════════════════════════╝")
 
     uvicorn.run(app, host=host, port=port, log_level="info")
 

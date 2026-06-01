@@ -1,81 +1,82 @@
 # HermesLens
 
-**Physical dashboard for Hermes Agent — M5 StickS3 + ESP32-S3**
+**Compact dashboard for your Hermes Agent — M5 StickS3**
 
-An open-source, community-friendly dashboard that brings your Hermes Agent setup to life on a compact $20 display. See agents, tasks, system health, and usage stats at a glance.
+A small physical display that sits on your desk and shows what your agents are doing in real time. No need to open a dashboard app or check logs — just glance at the M5 StickS3 to see agent status, active tasks, system health, and usage cost.
 
 ---
 
 ## Current Status
 
-- **Firmware:** C++ / PlatformIO — working captive portal, config persists, boots to dashboard
-- **Backend:** Python / FastAPI — runs locally, aggregates Hermes Agent data
-- **Flashing:** 3-file flash (bootloader + partitions + firmware) — tested and working
-- **Target:** M5 StickS3 (ESP32-S3, 240×135 ST7789 LCD, touch + buttons)
+- **Firmware:** C++ / PlatformIO — captive portal saves WiFi + backend URL, persists config in NVS, boots to dashboard
+- **Backend:** Python / FastAPI — reads live Hermes data, exposes `/api/health` and `/api/status`
+- **Display:** 4 polished pages — Agents, Tasks, System, Usage
+- **Connectivity:** M5 polls backend every ~10 seconds and renders live data
+- **Hardware:** M5 StickS3 (240×135 display, side/front buttons)
 
-**What works now:**
-- M5 boots → captive portal fires if no config saved
-- Portal saves WiFi + backend URL → reboots → dashboard loads
-- Dashboard polls backend and renders 4 pages (Agents, Tasks, System, Usage)
-- Touch swipe + physical button navigation
-- Config persists across reboots (NVS storage)
-
-**What still needs work:**
-- Backend → M5 data pipeline polish
-- End-to-end testing against live Hermes data
-- Community docs + README cleanup ← *we are here*
+**Out of the box:**
+- WiFi setup via captive portal — saves and reboots automatically
+- Live dashboard: agents, tasks, system, usage
+- Navigation with the side and front buttons
 
 ---
 
 ## Quick Start
 
 ### Prerequisites
+
 - M5 StickS3
 - USB-C cable (data-capable)
-- Computer with Python 3 + PlatformIO
+- Computer with a modern browser (for flashing)
 - 2.4 GHz WiFi network
-- Hermes Agent running locally
+- Hermes Agent installed, or a compatible HermesLens backend
 
-### 1. Build the Firmware
+### 1. Flash the Firmware
 
-```bash
-cd firmware-cpp
-pio run -e hermeslens-s3
-```
+Flash **3 files** at specific offsets. Detailed instructions: see [FLASH_INSTRUCTIONS.md](FLASH_INSTRUCTIONS.md).
 
-Output: `firmware-cpp/.pio/build/hermeslens-s3/firmware.bin`
+Recommended for most users: **Web Flasher** at https://esptool.spacehuhn.com/
+- Add the 3 files with offsets:
+  - `bootloader.bin` → `0x0000`
+  - `partitions.bin` → `0x8000`
+  - `firmware.bin` → `0x00010000`
+- Click **Burn**
 
-### 2. Flash the M5 StickS3
+Alternative: M5Burner Desktop or `esptool`. See `FLASH_INSTRUCTIONS.md` for step-by-step.
 
-Flash three files at specific offsets:
+### 2. Start the Backend
 
-| File | Offset |
-|------|--------|
-| `bootloader.bin` | `0x0000` |
-| `partitions.bin` | `0x8000` |
-| `firmware.bin` | `0x00010000` |
-
-Use **M5Burner** or a **web flasher** (e.g., https://m5burner.m5stack.com/) and add each file with its offset.
-
-### 3. Start the Backend
+The backend reads Hermes data and serves it to the M5.
 
 ```bash
 cd backend
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python server.py
 ```
 
-Backend runs at `http://<your-ip>:8123`.
+It listens on `http://0.0.0.0:8123` by default. Use `python server.py --help` or set `PORT` / `HOST` env vars if needed.
 
-### 4. Configure the M5
+> **Note:** The M5 must be able to reach this address on your network. Use a LAN IP, not `localhost` or `127.0.0.1`.
 
-1. Power on the M5 — it creates a WiFi AP named **HermesLens-Setup**
-2. Connect to that AP from your phone/laptop
-3. A captive portal opens (or go to `http://192.168.4.1`)
-4. Enter your WiFi SSID, password, and backend URL (e.g. `http://192.168.1.50:8123`)
-5. Tap **Save & Reboot**
+### 3. Configure the M5
 
-Dashboard loads on the M5 screen within ~5–10 seconds.
+1. Power on the M5 StickS3
+2. After ~3–5 seconds it creates WiFi AP **HermesLens-Setup**
+3. Connect your phone/laptop to that open network
+4. A captive portal opens automatically, or visit `http://192.168.4.1`
+5. Enter:
+   - **WiFi SSID** — your 2.4 GHz WiFi
+   - **WiFi Password** — your WiFi password
+   - **Backend URL** — e.g. `http://192.168.1.50:8123`
+6. Tap **Save & Reboot**
+7. Dashboard loads on the M5 screen within a few seconds
+
+If it stays on **Connecting...** for more than ~15 seconds:
+- Re-enter the backend URL
+- Confirm the backend is reachable from the same WiFi network
+- Disable AP/client isolation on your router
 
 ---
 
@@ -84,97 +85,50 @@ Dashboard loads on the M5 screen within ~5–10 seconds.
 ```
 hermeslens/
 ├── README.md              ← You are here
-├── DESIGN.md              ← Design decisions and API schema
-├── PLAN.md                ← High-level milestones
+├── DESIGN.md              ← Design decisions and API contract
 ├── FLASH_INSTRUCTIONS.md  ← Detailed flashing guide
 │
 ├── backend/               ← Python FastAPI data service
-│   ├── server.py          ← FastAPI entrypoint, /api/status + /api/health
-│   ├── config.py          ← YAML config loader
+│   ├── server.py          ← FastAPI app; /api/health and /api/status
+│   ├── config.py          ← Config loader with validation
 │   ├── requirements.txt   ← fastapi, uvicorn, pyyaml
 │   └── sources/           ← Data collectors
 │       ├── gateway.py     ← gateway_state.json
 │       ├── sessions.py    ← state.db
 │       ├── kanban.py      ← kanban.db
-│       ├── profiles.py    ← ~/.hermes/profiles/
-│       └── cron.py        ← cron jobs
+│       └── profiles.py    ← ~/.hermes/profiles/
 │
-├── firmware-cpp/          ← ESP32-S3 firmware (PlatformIO)
-│   ├── platformio.ini     ← Build config (espressif32@6.10.0)
-│   ├── src/
-│   │   ├── main.cpp       ← Boot, portal, dashboard loop
-│   │   ├── config.hpp     ← NVS config storage (Preferences.h)
-│   │   ├── display.hpp    ← M5 display wrapper, palette, fonts
-│   │   ├── wifi_manager.hpp ← WiFi STA + AP
-│   │   ├── api_client.hpp ← HTTP client, ArduinoJson
-│   │   ├── setup_portal.hpp ← Captive portal AP + DNS + form
-│   │   └── pages.hpp      ← 4 dashboard page renderers
-│   ├── include/           ← Shared headers (palette.hpp, font.hpp)
-│   └── data/
-│       └── setup.html     ← Captive portal HTML form
-│
-├── docs/
-│   └── hardware-setup.md  ← Pointer/redirect to current flashing docs
-│
-└── examples/
-    └── hermeslens.yaml    ← Example backend config
+└── firmware-cpp/          ← PlatformIO firmware
+    ├── platformio.ini
+    └── src/
+        ├── config.hpp     ← NVS storage via Preferences.h
+        ├── display.hpp    ← Page renderers, palette, fonts
+        ├── setup_portal.hpp ← Captive AP + form save
+        ├── wifi_manager.hpp
+        ├── api_client.hpp
+        └── pages.hpp
 ```
 
 ---
 
-## Game Plan
+## Known Limitations
 
-| Phase | Status | Focus |
-|-------|--------|-------|
-| **0 — Design** | ✅ Complete | Decisions locked, docs written |
-| **1 — Backend** | 🔜 In progress | Polish collectors, verify /api/status against live Hermes |
-| **2 — Firmware** | ✅ Working | C++ rewrite done; portal + dashboard + display verified |
-| **3 — Polish** | 🔜 Next | Error screens, loading states, docs cleanup |
-| **4 — Release** | ⏳ Future | GitHub repo, community guide, demo media |
+- Flash uses **3 files**; a single merged binary is planned but not required
+- Hermes data is read-only; HermesLens never modifies `~/.hermes`
+- Backend expects Hermes data files in `~/.hermes/` (`gateway_state.json`, `state.db`, `kanban.db`)
+- Best-effort error handling: if a source is missing, the backend returns safe defaults
+- M5 StickS3 needs 2.4 GHz WiFi; 5 GHz is not supported
 
-**Next milestone:** Get the backend producing clean `/api/status` data for the firmware, then test the full pipeline end-to-end.
-
-## Phases
-
-### Phase 0: Design ✅
-- [x] Project named: HermesLens
-- [x] Architecture: backend + C++ firmware on M5 StickS3
-- [x] API schema and data sources defined
-
-### Phase 1: Backend 🔜 In progress
-- [x] FastAPI server with `/api/status` and `/api/health`
-- [x] Config loader (YAML)
-- [x] Data collectors: gateway, sessions, kanban, profiles, cron
-- [x] Graceful defaults when Hermes data is missing
-
-### Phase 2: Firmware ✅
-- [x] C++ / PlatformIO rewrite
-- [x] WiFi STA + AP captive portal
-- [x] NVS config persistence
-- [x] 4-page dashboard (Agents, Tasks, System, Usage)
-- [x] Touch + physical button navigation
-
-### Phase 3: Polish 🔜 Next
-- [ ] Backend schema verified against live Hermes data
-- [ ] End-to-end hardware test
-- [ ] Error screens + loading states
-- [ ] Final docs cleanup
-
-### Phase 4: Release ⏳
-- [ ] GitHub repo
-- [ ] Community flash package
-- [ ] Demo media
 ---
 
 ## Contributing
 
-This is an open-source project. Bugs, features, and docs improvements are welcome.
+Community contributions are welcome.
 
-1. Firmware changes: edit `firmware-cpp/src/`, rebuild with `pio run`
-2. Backend changes: edit `backend/sources/`, restart `server.py`
-3. Docs: update this README first, then patch legacy files
-
-See `DESIGN.md` for API contracts and data schemas.
+1. Read [DESIGN.md](DESIGN.md) for the data contract and architecture
+2. Firmware changes live in `firmware-cpp/src/`; rebuild with `pio run -e hermeslens-s3`
+3. Backend changes live in `backend/sources/`; restart `python server.py`
+4. Issues and PRs welcome — please include reproduction steps and serial/log output when reporting firmware problems
 
 ---
 
