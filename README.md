@@ -60,6 +60,8 @@ It listens on `http://0.0.0.0:8123` by default. Use `python server.py --help` or
 
 > **Note:** The M5 must be able to reach this address on your network. Use a LAN IP, not `localhost` or `127.0.0.1`.
 
+For detailed backend configuration (YAML config, env vars, API key), see `backend/SETUP.md`.
+
 ### 3. Configure the M5
 
 1. Power on the M5 StickS3
