@@ -27,7 +27,9 @@ class KanbanCollector:
                 self.conn = sqlite3.connect(str(self.kanban_path))
             except sqlite3.OperationalError as e:
                 # Database might be locked - return None to indicate we can't connect
-                pass
+                import logging
+                logging.getLogger(__name__).warning("kanban sqlite connect failed: %s", e)
+                return None
         return self.conn
     
     def _close_conn(self):
@@ -178,7 +180,7 @@ class KanbanCollector:
             result["runs_recent"] = recent_runs
             
         except (sqlite3.Error, IOError) as e:
-            # If we can't read detailed data, just return basic counts
-            pass
+            import logging
+            logging.getLogger(__name__).warning("kanban collect_all failed: %s", e)
         
         return result

@@ -221,9 +221,9 @@ static inline void renderUsagePage(const ApiStatus& status,
     }
 
     struct { const char* label; unsigned long val; } statRows[] = {
-        { "Input",    status.sessions.tokens_input      },
-        { "Output",   status.sessions.tokens_output     },
-        { "API calls",status.sessions.tool_calls_total  },
+        { "Input",    static_cast<unsigned long>(status.sessions.tokens_input)      },
+        { "Output",   static_cast<unsigned long>(status.sessions.tokens_output)     },
+        { "API calls",static_cast<unsigned long>(status.sessions.tool_calls_total)  },
     };
 
     int y = HEADER_H + 18;

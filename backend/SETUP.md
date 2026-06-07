@@ -78,7 +78,7 @@ curl http://localhost:8123/api/health
 Response:
 
 ```json
-{"status":"ok","version":"0.1.0"}
+{"status":"ok","version":"0.1.1"}
 ```
 
 ### Dashboard data

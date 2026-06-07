@@ -96,7 +96,7 @@ void setup() {
     // Boot banner (may be buffered; always println — works even if no monitor)
     Serial.println("");
     Serial.println("╔══════════════════════╗");
-    Serial.println("║  HermesLens v0.2.0   ║");
+    Serial.println("║  HermesLens v0.1.1   ║");
     Serial.println("║  M5 StickS3 Firmware ║");
     Serial.println("╚══════════════════════╝");
 

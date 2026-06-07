@@ -25,7 +25,7 @@
 struct HermesConfig {
     String wifi_ssid;
     String wifi_password;
-    String backend_url;       // e.g. "http://13.0.0.3:8123"
+    String backend_url;       // e.g. "http://127.0.0.1:8123"
     int    api_timeout;       // seconds
     int    refresh_interval;  // seconds between polls
     bool   debug_mode;
@@ -110,6 +110,7 @@ public:
         if (load_failed)                        return true;
         if (cfg.wifi_ssid.length() == 0)        return true;
         if (cfg.wifi_password.length() == 0)    return true;
+        if (cfg.backend_url.length() == 0)      return true;
         return false;
     }
 

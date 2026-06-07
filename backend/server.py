@@ -46,7 +46,7 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 # Version
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 # Create FastAPI app
 app = FastAPI(
@@ -194,6 +194,7 @@ async def get_status(request: Request) -> dict:
             "in_progress_with_assignee": [],
             "runs_recent": [],
         },
+        method_name="collect_all",
     )
 
     agent_filter = config.get("agents", []) if isinstance(config, dict) else []
@@ -221,22 +222,6 @@ async def get_status(request: Request) -> dict:
         agent["current_task"] = task or ""
         agent["model"] = ""
 
-    return {
-        "version": VERSION,
-        "hermes_version": _get_hermes_version(),
-        "hermes_home": resolve_hermes_home(),
-        "config": {
-            "refresh_interval": config.get("refresh_interval", 10) if isinstance(config, dict) else 10,
-            "pages": config.get("pages", ["agents", "tasks", "system", "usage"]) if isinstance(config, dict) else ["agents", "tasks", "system", "usage"],
-        },
-        "gateway": gateway_data,
-        "sessions": sessions_data,
-        "tasks": kanban_data,
-        "agents": profiles_data,
-        "current_model": (sessions_data.get("recent") or [{}])[0].get("model") or "",
-        "session_cost_usd": _session_cost(sessions_data),
-    }
-
     payload = {
         "version": VERSION,
         "hermes_version": _get_hermes_version(),
@@ -253,20 +238,18 @@ async def get_status(request: Request) -> dict:
         "session_cost_usd": _session_cost(sessions_data),
     }
 
-    try:
-        _validate_status_response(payload)
-    except Exception as exc:
-        logger.exception("/api/status schema validation failed: %s", exc)
+    _validate_status_response(payload)
 
     return payload
 
 
-def _safe_collect(collector, name: str, default: dict, **kwargs):
-    """Run collector.collect(), log tracebacks, return defaults on failure."""
+def _safe_collect(collector, name: str, default: dict, method_name: str = "collect", **kwargs):
+    """Run collector method by name, log tracebacks, return defaults on failure."""
     try:
+        method = getattr(collector, method_name)
         if kwargs:
-            return collector.collect(**kwargs)
-        return collector.collect()
+            return method(**kwargs)
+        return method()
     except Exception:
         logger.exception("collector failed: %s", name)
         return default

@@ -4,7 +4,7 @@
 
 HermesLens is an open-source physical dashboard for Hermes Agent that runs on an M5 StickS3 device. It provides a real-time, glanceable view of your agent team, tasks, system health, and usage stats.
 
-The backend is a FastAPI service that reads live Hermes data from SQLite and local files, then exposes it over a simple HTTP API. The M5 StickS3 polls that API and renders a 4-page dashboard on its built-in display.
+The backend is a FastAPI service that reads live Hermes data from SQLite and local files, then exposes it over a simple HTTP API. The M5 StickS3 polls that API and renders a 4-page dashboard on its built-in TFT.
 
 ---
 
@@ -55,7 +55,7 @@ The HermesLens backend exposes a FastAPI server:
 
 ```json
 {
-  "version": "0.1.0",
+  "version": "0.1.1",
   "current_model": "stepfun/step-3.5-flash",
   "gateway": {
     "state": "running",
@@ -130,29 +130,17 @@ Notes:
 
 ```
 hermeslens/
-├── README.md              ← Project overview and quick start
-├── DESIGN.md              ← Design decisions and API contract
-├── FLASH_INSTRUCTIONS.md  ← Detailed flashing guide
-│
-├── backend/               ← Python FastAPI data service
-│   ├── server.py          ← FastAPI app; /api/health and /api/status
-│   ├── config.py          ← Config loader with validation
-│   ├── requirements.txt   ← fastapi, uvicorn, pyyaml
-│   └── sources/           ← Data collectors
-│       ├── gateway.py     ← gateway_state.json
-│       ├── sessions.py    ← state.db
-│       ├── kanban.py      ← kanban.db
-│       └── profiles.py    ← ~/.hermes/profiles/
-│
-└── firmware-cpp/          ← ESP32-S3 firmware (PlatformIO)
-    ├── platformio.ini
-    └── src/
-        ├── config.hpp     ← NVS storage via Preferences.h
-        ├── display.hpp    ← Page renderers, palette, fonts
-        ├── setup_portal.hpp ← Captive AP + form save
-        ├── wifi_manager.hpp
-        ├── api_client.hpp
-        └── pages.hpp
+  backend/
+    server.py           # FastAPI entry point (`python server.py`)
+    sources/            # Data collectors for gateway, sessions, kanban, profiles
+  firmware-cpp/
+    src/                # C++/PlatformIO app (WiFi, captive portal, display, API client)
+  docs/
+    hardware-setup.md   # M5 StickS3 assembly and flashing
+  README.md
+  PLAN.md
+  CURRENT_STATE.md
+  TRACKED_ISSUES.md
 ```
 
 ---
@@ -172,4 +160,12 @@ End users flash the M5 StickS3 with three files:
 
 ---
 
-The 3-file flash process is intentional; no auto-merge at build time.
+## Phases
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 0 | Design | Done |
+| 1 | Backend data service | Working |
+| 2 | Firmware: portal + config + display | Working |
+| 3 |Polish + backend hardening + end-to-end test | Next |
+| 4 | Community release (docs, repo, packaging) | Future |
